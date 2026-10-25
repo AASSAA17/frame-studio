@@ -1,0 +1,1 @@
+ALTER TABLE "StudioSettings" ADD COLUMN "reminderHours" INTEGER[] NOT NULL DEFAULT ARRAY[24, 2]::INTEGER[];

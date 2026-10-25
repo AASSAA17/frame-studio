@@ -1,0 +1,9 @@
+node_modules
+.next
+pnpm-lock.yaml
+work
+backups
+test-results
+playwright-report
+prisma/migrations
+docs/SPECIFICATION_RU.md
