@@ -4,7 +4,7 @@ import { handle, rateLimit, requestBucket } from "@/lib/http";
 const schema = z.object({
   locationId: z.string().min(1).max(100),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  durationMinutes: z.coerce.number().int().min(30).max(720),
+  durationMinutes: z.coerce.number().int().min(5).max(720),
   specialistId: z.string().min(1).max(100).optional(),
   equipmentIds: z.array(z.string().max(100)).max(20),
 });

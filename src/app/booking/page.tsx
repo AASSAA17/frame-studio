@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -15,6 +15,7 @@ import { PublicShell, State } from "@/components/shared";
 import { useStudio } from "@/components/studio-provider";
 import {
   api,
+  ApiError,
   useApi,
   money,
   localDate,
@@ -35,7 +36,10 @@ type Quote = {
   depositMinor: number;
   balanceMinor: number;
   currency: string;
-  version: { name: string; id: string };
+  version: { name: string; id: string; image?: string };
+  fingerprint?: string;
+  rulesText?: string;
+  rulesVersion?: string;
 };
 type Draft = {
   purpose: string;
@@ -62,6 +66,8 @@ const initial: Draft = {
 export default function BookingPage() {
   const { t, text, locale } = useStudio();
   const router = useRouter();
+  const pendingIntent = useRef<{ signature: string; key: string } | null>(null);
+  const [quoteRevision, setQuoteRevision] = useState(0);
   const catalog = useApi<Catalog>("/api/catalog");
   const session = useApi<{ user: User | null }>("/api/session");
   const [draft, setDraft] = useState<Draft>(initial),
@@ -168,6 +174,7 @@ export default function BookingPage() {
       return;
     }
     let active = true;
+    setAccepted(false);
     setQuoteBusy(true);
     setQuoteError("");
     setQuote(null);
@@ -184,7 +191,7 @@ export default function BookingPage() {
     return () => {
       active = false;
     };
-  }, [bodyKey, draft.locationId, draft.startAt]);
+  }, [bodyKey, draft.locationId, draft.startAt, quoteRevision, catalog.data]);
   const update = (value: Partial<Draft>, resetTime = false) => {
     setDraft((old) => ({
       ...old,
@@ -229,21 +236,46 @@ export default function BookingPage() {
     if (!accepted || !quote) return;
     setBusy(true);
     setError("");
+    const submission = {
+      ...body,
+      name,
+      phone,
+      comment,
+      acceptRules: true,
+      expectedTotalMinor: quote.totalMinor,
+      expectedQuoteFingerprint: quote.fingerprint,
+    };
+    const signature = JSON.stringify(submission);
+    if (!pendingIntent.current || pendingIntent.current.signature !== signature)
+      pendingIntent.current = { signature, key: crypto.randomUUID() };
     try {
       const booking = await api<Booking>("/api/bookings", {
         method: "POST",
         body: JSON.stringify({
-          ...body,
-          name,
-          phone,
-          comment,
-          acceptRules: true,
+          ...submission,
+          idempotencyKey: pendingIntent.current.key,
         }),
       });
       sessionStorage.removeItem("frame-booking-draft");
       router.push(`/account/bookings/${booking.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t.error);
+      const changed =
+        err instanceof ApiError &&
+        ["QUOTE_CHANGED", "PRICE_CHANGED"].includes(err.code || "");
+      setError(
+        changed
+          ? text(
+              "Условия заказа изменились. Проверьте новый расчёт и правила, затем подтвердите их снова.",
+              "Тапсырыс шарттары өзгерді. Жаңа есеп пен ережелерді тексеріп, қайта растаңыз.",
+            )
+          : err instanceof Error
+            ? err.message
+            : t.error,
+      );
+      if (changed) {
+        setAccepted(false);
+        setQuoteRevision((value) => value + 1);
+      }
       availability.refresh();
     } finally {
       setBusy(false);
@@ -433,12 +465,22 @@ export default function BookingPage() {
                     </div>
                     <div className="wizard-section">
                       <h3>{text("Оборудование", "Жабдық")}</h3>
+                      <p className="field-help">
+                        {text(
+                          "До 20 единиц оборудования на заказ.",
+                          "Бір тапсырысқа 20 бірлікке дейін жабдық.",
+                        )}
+                      </p>
                       <div className="check-list">
                         {catalog.data?.equipment.map((item) => (
                           <label className="check-option" key={item.id}>
                             <input
                               type="checkbox"
                               checked={draft.equipmentIds.includes(item.id)}
+                              disabled={
+                                !draft.equipmentIds.includes(item.id) &&
+                                draft.equipmentIds.length >= 20
+                              }
                               onChange={() => toggle("equipmentIds", item.id)}
                             />
                             <span>{item.name}</span>
@@ -604,7 +646,8 @@ export default function BookingPage() {
                       ))}
                     </dl>
                     <div className="notice" style={{ marginTop: 22 }}>
-                      {catalog.data?.settings.rulesText ||
+                      {quote?.rulesText ||
+                        catalog.data?.settings.rulesText ||
                         text(
                           "Тестовые условия аренды. Перед реальной работой правила должны быть утверждены студией.",
                           "Жалдаудың сынақ шарттары. Нақты жұмыс алдында студия ережелерді бекітуі тиіс.",
@@ -708,7 +751,12 @@ export default function BookingPage() {
             <aside className="order-summary">
               <img
                 className="summary-image"
-                src={location?.image || "/images/daylight.svg"}
+                src={
+                  quote?.version.image ||
+                  location?.currentVersion?.image ||
+                  location?.image ||
+                  "/images/daylight.svg"
+                }
                 alt={location?.name || t.illustration}
               />
               <div className="summary-body">

@@ -8,18 +8,19 @@ datasource db {
 }
 
 model User {
-  id            String    @id
+  id            String      @id
   name          String
-  email         String    @unique
-  emailVerified Boolean   @default(false)
+  email         String      @unique
+  emailVerified Boolean     @default(false)
   image         String?
-  role          String    @default("CLIENT")
-  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+  role          String      @default("CLIENT")
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @db.Timestamptz(3)
   sessions      Session[]
   accounts      Account[]
   bookings      Booking[]
   specialist    Specialist?
+  customer      Customer?
 }
 
 model Session {
@@ -31,7 +32,8 @@ model Session {
   ipAddress String?
   userAgent String?
   userId    String
-  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
 }
 
@@ -47,11 +49,12 @@ model Account {
   refreshTokenExpiresAt DateTime? @db.Timestamptz(3)
   scope                 String?
   password              String?
-  createdAt             DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@index([userId])
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@unique([providerId, accountId])
+  @@index([userId])
 }
 
 model Verification {
@@ -61,6 +64,7 @@ model Verification {
   expiresAt  DateTime @db.Timestamptz(3)
   createdAt  DateTime @default(now()) @db.Timestamptz(3)
   updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
   @@index([identifier])
 }
 
@@ -72,24 +76,25 @@ model RateLimit {
 }
 
 model StudioSettings {
-  id                 String @id @default("studio")
-  name               String @default("FRAME STUDIO")
-  city               String @default("Астана")
-  currency           String @default("KZT")
-  timezone           String @default("Asia/Almaty")
-  depositPercent     Int    @default(30)
-  holdMinutes        Int    @default(15)
-  openHour           Int    @default(8)
-  closeHour          Int    @default(22)
-  stepMinutes        Int    @default(30)
-  minimumMinutes     Int    @default(60)
-  bufferBeforeMinutes Int   @default(15)
-  bufferAfterMinutes Int    @default(15)
-  reminderHours      Int[]  @default([24, 2])
-  rulesText          String
-  rulesVersion       String @default("demo-1")
-  contacts           Json   @default("{}")
-  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+  id                  String   @id @default("studio")
+  name                String   @default("FRAME STUDIO")
+  city                String   @default("Астана")
+  currency            String   @default("KZT")
+  timezone            String   @default("Asia/Almaty")
+  depositPercent      Int      @default(30)
+  holdMinutes         Int      @default(15)
+  openHour            Int      @default(8)
+  closeHour           Int      @default(22)
+  stepMinutes         Int      @default(30)
+  minimumMinutes      Int      @default(60)
+  bufferBeforeMinutes Int      @default(15)
+  bufferAfterMinutes  Int      @default(15)
+  reminderHours       Int[]    @default([24, 2])
+  rulesText           String
+  rulesVersion        String   @default("demo-1")
+  contacts            Json     @default("{}")
+  revision            Int      @default(1)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
 }
 
 enum ResourceType {
@@ -99,110 +104,166 @@ enum ResourceType {
 }
 
 model Resource {
-  id         String       @id @default(cuid())
+  id         String                      @id @default(cuid())
   name       String
   type       ResourceType
-  active     Boolean      @default(true)
-  openHour   Int          @default(8)
-  closeHour  Int          @default(22)
-  weekdays   Int[]        @default([1, 2, 3, 4, 5, 6, 7])
+  active     Boolean                     @default(true)
+  openHour   Int                         @default(8)
+  closeHour  Int                         @default(22)
+  weekdays   Int[]                       @default([1, 2, 3, 4, 5, 6, 7])
+  revision   Int                         @default(1)
   units      ResourceUnit[]
   closures   ResourceClosure[]
+  exceptions ResourceScheduleException[]
   room       Room?
   specialist Specialist?
   equipment  Equipment?
 }
 
 model ResourceUnit {
-  id          String @id @default(cuid())
-  resourceId  String
-  serial      Int
-  active      Boolean @default(true)
-  resource    Resource @relation(fields: [resourceId], references: [id], onDelete: Restrict)
-  allocations Allocation[]
+  id              String       @id @default(cuid())
+  resourceId      String
+  serial          Int
+  active          Boolean      @default(true)
+  maintenanceNote String       @default("")
+  retiredAt       DateTime?    @db.Timestamptz(3)
+  revision        Int          @default(1)
+  resource        Resource     @relation(fields: [resourceId], references: [id], onDelete: Restrict)
+  allocations     Allocation[]
+
   @@unique([resourceId, serial])
 }
 
 model ResourceClosure {
-  id         String @id @default(cuid())
+  id         String   @id @default(cuid())
   resourceId String
   startAt    DateTime @db.Timestamptz(3)
   endAt      DateTime @db.Timestamptz(3)
   reason     String
+  revision   Int      @default(1)
   resource   Resource @relation(fields: [resourceId], references: [id], onDelete: Restrict)
+
   @@index([resourceId, startAt, endAt])
 }
 
-model Room {
-  id         String @id @default(cuid())
-  name       String
-  resourceId String @unique
-  capacity   Int
+model ResourceScheduleException {
+  id         String   @id @default(cuid())
+  resourceId String
+  date       String
+  closed     Boolean  @default(false)
+  openHour   Int?
+  closeHour  Int?
+  revision   Int      @default(1)
   resource   Resource @relation(fields: [resourceId], references: [id], onDelete: Restrict)
+
+  @@unique([resourceId, date])
+}
+
+model Room {
+  id         String     @id @default(cuid())
+  name       String
+  resourceId String     @unique
+  capacity   Int
+  archivedAt DateTime?  @db.Timestamptz(3)
+  revision   Int        @default(1)
+  resource   Resource   @relation(fields: [resourceId], references: [id], onDelete: Restrict)
   locations  Location[]
 }
 
 model Location {
-  id               String @id @default(cuid())
-  slug             String @unique
+  id               String         @id @default(cuid())
+  slug             String         @unique
   name             String
   description      String
-  descriptionKk    String @default("")
+  descriptionKk    String         @default("")
   image            String
   area             Int
   capacity         Int
   hourlyPriceMinor Int
   tags             String[]
-  published        Boolean @default(true)
+  published        Boolean        @default(true)
+  archivedAt       DateTime?      @db.Timestamptz(3)
+  revision         Int            @default(1)
   roomId           String
-  room             Room @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  room             Room           @relation(fields: [roomId], references: [id], onDelete: Restrict)
   versions         DecorVersion[]
   bookings         Booking[]
+
   @@index([roomId])
 }
 
 model DecorVersion {
-  id         String @id @default(cuid())
+  id         String    @id @default(cuid())
   locationId String
   name       String
   image      String
-  validFrom  DateTime @db.Timestamptz(3)
+  validFrom  DateTime  @db.Timestamptz(3)
   validUntil DateTime? @db.Timestamptz(3)
-  published  Boolean @default(true)
-  location   Location @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  published  Boolean   @default(true)
+  archivedAt DateTime? @db.Timestamptz(3)
+  revision   Int       @default(1)
+  location   Location  @relation(fields: [locationId], references: [id], onDelete: Restrict)
   bookings   Booking[]
+
   @@index([locationId, validFrom, validUntil])
 }
 
 model Specialist {
-  id               String @id @default(cuid())
+  id               String    @id @default(cuid())
   name             String
   specialty        String
   hourlyPriceMinor Int
-  resourceId       String @unique
-  userId           String? @unique
-  published        Boolean @default(true)
-  resource         Resource @relation(fields: [resourceId], references: [id], onDelete: Restrict)
-  user             User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  resourceId       String    @unique
+  userId           String?   @unique
+  published        Boolean   @default(true)
+  archivedAt       DateTime? @db.Timestamptz(3)
+  revision         Int       @default(1)
+  resource         Resource  @relation(fields: [resourceId], references: [id], onDelete: Restrict)
+  user             User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   bookings         Booking[]
 }
 
 model Service {
-  id          String @id @default(cuid())
+  id          String    @id @default(cuid())
   name        String
   description String
   priceMinor  Int
-  production  Boolean @default(false)
-  published   Boolean @default(true)
+  production  Boolean   @default(false)
+  published   Boolean   @default(true)
+  archivedAt  DateTime? @db.Timestamptz(3)
+  revision    Int       @default(1)
 }
 
 model Equipment {
-  id          String @id @default(cuid())
-  name        String
-  priceMinor  Int
-  resourceId  String @unique
-  published   Boolean @default(true)
-  resource    Resource @relation(fields: [resourceId], references: [id], onDelete: Restrict)
+  id         String    @id @default(cuid())
+  name       String
+  priceMinor Int
+  resourceId String    @unique
+  published  Boolean   @default(true)
+  archivedAt DateTime? @db.Timestamptz(3)
+  revision   Int       @default(1)
+  resource   Resource  @relation(fields: [resourceId], references: [id], onDelete: Restrict)
+}
+
+model Customer {
+  id              String    @id @default(cuid())
+  name            String
+  email           String?
+  phone           String?
+  normalizedPhone String?
+  notes           String    @default("")
+  tags            String[]  @default([])
+  archivedAt      DateTime? @db.Timestamptz(3)
+  userId          String?   @unique
+  revision        Int       @default(1)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+  user            User?     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  bookings        Booking[]
+
+  @@index([name])
+  @@index([email])
+  @@index([normalizedPhone])
 }
 
 enum BookingStatus {
@@ -217,82 +278,93 @@ enum BookingStatus {
 }
 
 model Booking {
-  id               String @id @default(cuid())
-  number           String @unique
-  userId           String
-  locationId       String
-  decorVersionId   String
-  specialistId     String?
-  status           BookingStatus @default(awaiting_payment)
-  name             String
-  phone            String
-  purpose          String
-  guests           Int
-  comment          String @default("")
-  startAt          DateTime @db.Timestamptz(3)
-  endAt            DateTime @db.Timestamptz(3)
-  expiresAt        DateTime? @db.Timestamptz(3)
-  currency         String @default("KZT")
-  totalMinor       Int
-  depositMinor     Int
-  locationName     String
-  versionName      String
-  specialistName   String?
-  rulesVersion     String
-  rulesText        String
-  inputSnapshot    Json
-  versionSnapshot  Json
-  createdAt        DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
-  user             User @relation(fields: [userId], references: [id], onDelete: Restrict)
-  location         Location @relation(fields: [locationId], references: [id], onDelete: Restrict)
-  decorVersion     DecorVersion @relation(fields: [decorVersionId], references: [id], onDelete: Restrict)
-  specialist       Specialist? @relation(fields: [specialistId], references: [id], onDelete: Restrict)
-  items            BookingItem[]
-  allocations      Allocation[]
-  payments         Payment[]
-  revisions        BookingRevision[]
-  tasks            Task[]
-  contentProject   ContentProject?
-  notifications    NotificationJob[]
+  id                  String            @id @default(cuid())
+  number              String            @unique
+  userId              String?
+  customerId          String?
+  createdById         String?
+  source              String            @default("website")
+  creationKey         String?           @unique
+  creationPayloadHash String?
+  locationId          String
+  decorVersionId      String
+  specialistId        String?
+  status              BookingStatus     @default(awaiting_payment)
+  name                String
+  phone               String
+  purpose             String
+  guests              Int
+  comment             String            @default("")
+  startAt             DateTime          @db.Timestamptz(3)
+  endAt               DateTime          @db.Timestamptz(3)
+  expiresAt           DateTime?         @db.Timestamptz(3)
+  currency            String            @default("KZT")
+  totalMinor          Int
+  depositMinor        Int
+  locationName        String
+  versionName         String
+  specialistName      String?
+  rulesVersion        String
+  rulesText           String
+  inputSnapshot       Json
+  versionSnapshot     Json
+  createdAt           DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime          @updatedAt @db.Timestamptz(3)
+  user                User?             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  customer            Customer?         @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  location            Location          @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  decorVersion        DecorVersion      @relation(fields: [decorVersionId], references: [id], onDelete: Restrict)
+  specialist          Specialist?       @relation(fields: [specialistId], references: [id], onDelete: Restrict)
+  items               BookingItem[]
+  allocations         Allocation[]
+  payments            Payment[]
+  revisions           BookingRevision[]
+  tasks               Task[]
+  contentProject      ContentProject?
+  notifications       NotificationJob[]
+
   @@index([userId, startAt])
+  @@index([customerId, startAt])
   @@index([specialistId, startAt])
   @@index([status, expiresAt])
   @@index([startAt, endAt])
 }
 
 model BookingItem {
-  id             String @id @default(cuid())
+  id             String  @id @default(cuid())
   bookingId      String
   label          String
   quantity       Float
   unitPriceMinor Int
   totalMinor     Int
   booking        Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
   @@index([bookingId])
 }
 
 model BookingRevision {
-  id        String @id @default(cuid())
+  id        String   @id @default(cuid())
   bookingId String
   actorId   String
   before    Json
   after     Json
   createdAt DateTime @default(now()) @db.Timestamptz(3)
-  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
   @@index([bookingId, createdAt])
 }
 
 model Allocation {
-  id         String @id @default(cuid())
+  id         String       @id @default(cuid())
   unitId     String
   bookingId  String
-  startAt    DateTime @db.Timestamptz(3)
-  endAt      DateTime @db.Timestamptz(3)
-  expiresAt  DateTime? @db.Timestamptz(3)
-  releasedAt DateTime? @db.Timestamptz(3)
+  startAt    DateTime     @db.Timestamptz(3)
+  endAt      DateTime     @db.Timestamptz(3)
+  expiresAt  DateTime?    @db.Timestamptz(3)
+  releasedAt DateTime?    @db.Timestamptz(3)
   unit       ResourceUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
-  booking    Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  booking    Booking      @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
   @@index([unitId, startAt, endAt])
   @@index([bookingId])
   @@index([expiresAt, releasedAt])
@@ -304,107 +376,113 @@ enum PaymentKind {
 }
 
 model Payment {
-  id             String @id @default(cuid())
+  id             String      @id @default(cuid())
   bookingId      String
   kind           PaymentKind
   amountMinor    Int
   currency       String
   method         String
-  idempotencyKey String @unique
+  idempotencyKey String      @unique
   actorId        String
-  comment        String @default("")
-  createdAt      DateTime @default(now()) @db.Timestamptz(3)
-  booking        Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  comment        String      @default("")
+  createdAt      DateTime    @default(now()) @db.Timestamptz(3)
+  booking        Booking     @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
   @@index([bookingId, createdAt])
   @@index([createdAt, kind])
 }
 
 model ContentProject {
-  id             String @id @default(cuid())
-  bookingId      String @unique
-  stage          String @default("brief")
+  id             String        @id @default(cuid())
+  bookingId      String        @unique
+  stage          String        @default("brief")
   title          String
-  dueAt          DateTime? @db.Timestamptz(3)
-  includedRounds Int @default(1)
-  booking        Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  dueAt          DateTime?     @db.Timestamptz(3)
+  includedRounds Int           @default(1)
+  booking        Booking       @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   files          ContentFile[]
 }
 
 model ContentFile {
-  id          String @id @default(cuid())
+  id          String         @id @default(cuid())
   projectId   String
-  objectKey   String @unique
+  objectKey   String         @unique
   name        String
   contentType String
   sizeBytes   Int
-  version     Int @default(1)
+  version     Int            @default(1)
   kind        String
-  createdAt   DateTime @default(now()) @db.Timestamptz(3)
-  expiresAt   DateTime? @db.Timestamptz(3)
+  createdAt   DateTime       @default(now()) @db.Timestamptz(3)
+  expiresAt   DateTime?      @db.Timestamptz(3)
   project     ContentProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
   @@index([projectId])
 }
 
 model Lead {
-  id          String @id @default(cuid())
+  id          String    @id @default(cuid())
   name        String
   email       String
   phone       String?
   description String
   purpose     String
   desiredDate DateTime? @db.Timestamptz(3)
-  status      String @default("new")
-  source      String @default("website")
+  status      String    @default("new")
+  source      String    @default("website")
   ownerId     String?
-  createdAt   DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
 }
 
 model Task {
-  id        String @id @default(cuid())
+  id        String   @id @default(cuid())
   bookingId String?
   kind      String
   title     String
-  status    String @default("open")
+  status    String   @default("open")
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   booking   Booking? @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
   @@index([bookingId, kind])
 }
 
 model NotificationJob {
-  id          String @id @default(cuid())
+  id          String    @id @default(cuid())
   bookingId   String?
-  dedupeKey   String @unique
+  dedupeKey   String    @unique
   to          String
   subject     String
   text        String
-  status      String @default("pending")
-  attempts    Int @default(0)
-  scheduledAt DateTime @default(now()) @db.Timestamptz(3)
+  status      String    @default("pending")
+  attempts    Int       @default(0)
+  scheduledAt DateTime  @default(now()) @db.Timestamptz(3)
   lockedUntil DateTime? @db.Timestamptz(3)
   sentAt      DateTime? @db.Timestamptz(3)
   lastError   String?
-  createdAt   DateTime @default(now()) @db.Timestamptz(3)
-  booking     Booking? @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  booking     Booking?  @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
   @@index([status, scheduledAt])
 }
 
 model Consent {
-  id        String @id @default(cuid())
+  id        String   @id @default(cuid())
   userId    String
   kind      String
   version   String
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+
   @@index([userId, kind])
 }
 
 model AuditEvent {
-  id         String @id @default(cuid())
+  id         String   @id @default(cuid())
   actorId    String
   action     String
   entityType String
   entityId   String
   metadata   Json
   createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
   @@index([entityType, entityId, createdAt])
 }

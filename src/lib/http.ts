@@ -110,7 +110,14 @@ export async function handle(fn: () => Promise<unknown>) {
   } catch (error) {
     if (error instanceof DomainError)
       return json(
-        { error: error.message, message: error.message, code: error.code },
+        {
+          error: error.message,
+          message: error.message,
+          code: error.code,
+          ...("details" in error && error.details
+            ? { details: error.details }
+            : {}),
+        },
         error.status,
       );
     if (error instanceof ZodError)

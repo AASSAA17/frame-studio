@@ -1,4 +1,6 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { z } from "zod";
+import { lockStudio, lockCreationKey } from "./locks";
 import { Prisma, type BookingStatus } from "@prisma/client";
 import { db } from "../db";
 import { prepareQuote, type DbClient, type ResourceNeed } from "./catalog";
@@ -10,6 +12,7 @@ import {
 import { paymentSummary } from "./pricing";
 import {
   bookingInputSchema,
+  quoteInputSchema,
   invariant,
   isStaff,
   type Actor,
@@ -104,6 +107,9 @@ function visibleBooking(booking: BookingRecord, actor: Actor) {
   if (isStaff(actor))
     return {
       ...dto,
+      customerId: booking.customerId,
+      createdById: booking.createdById,
+      source: booking.source,
       payments: dto.payments.map((payment, index) => ({
         ...payment,
         actorId: booking.payments[index].actorId,
@@ -164,18 +170,19 @@ export async function notifyBooking(
   client: DbClient,
   booking: {
     id: string;
-    userId: string;
+    userId: string | null;
     number: string;
     startAt: Date;
     status: BookingStatus;
   },
   reason: string,
 ) {
+  if (!booking.userId) return;
   const user = await client.user.findUnique({
     where: { id: booking.userId },
-    select: { email: true },
+    select: { email: true, emailVerified: true },
   });
-  if (!user) return;
+  if (!user?.emailVerified) return;
   const title =
     reason === "created"
       ? "Бронирование создано"
@@ -197,13 +204,14 @@ export async function notifyBooking(
 
 export async function scheduleReminders(
   client: DbClient,
-  booking: { id: string; userId: string; number: string; startAt: Date },
+  booking: { id: string; userId: string | null; number: string; startAt: Date },
 ) {
+  if (!booking.userId) return;
   const user = await client.user.findUnique({
     where: { id: booking.userId },
-    select: { email: true },
+    select: { email: true, emailVerified: true },
   });
-  if (!user) return;
+  if (!user?.emailVerified) return;
   await client.notificationJob.updateMany({
     where: {
       bookingId: booking.id,
@@ -271,10 +279,64 @@ export async function listBookings(actor: Actor) {
   return bookings.map((booking) => visibleBooking(booking, actor));
 }
 
+const manualBookingSchema = quoteInputSchema
+  .extend({
+    customerId: z.string().min(1).max(100),
+    source: z.enum(["phone", "message", "walk_in", "other"]),
+    idempotencyKey: z.string().min(8).max(150),
+    expectedTotalMinor: z.number().int().nonnegative().optional(),
+    expectedQuoteFingerprint: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    comment: z.string().trim().max(2000).default(""),
+    acceptRules: z.literal(true),
+  })
+  .strict();
+
+function creationHash(input: Record<string, unknown>) {
+  const { idempotencyKey: _key, ...canonical } = input;
+  if (Array.isArray(canonical.serviceIds))
+    canonical.serviceIds = [...new Set(canonical.serviceIds)].sort();
+  if (Array.isArray(canonical.equipmentIds))
+    canonical.equipmentIds = [...canonical.equipmentIds].sort();
+  if (typeof canonical.startAt === "string")
+    canonical.startAt = new Date(canonical.startAt).toISOString();
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+async function existingCreation(
+  client: DbClient,
+  key: string | null,
+  hash: string,
+  actor: Actor,
+) {
+  if (!key) return null;
+  await lockCreationKey(client, key);
+  const previous = await client.booking.findUnique({
+    where: { creationKey: key },
+    include: bookingInclude,
+  });
+  if (!previous) return null;
+  invariant(
+    previous.creationPayloadHash === hash,
+    "IDEMPOTENCY_CONFLICT",
+    "Этот ключ создания уже использован с другими данными.",
+    409,
+  );
+  authorizeBooking(previous, actor);
+  return visibleBooking(previous, actor);
+}
+
 export async function createBooking(raw: BookingInput, userId: string) {
   const input = bookingInputSchema.parse(raw);
+  const key = input.idempotencyKey
+    ? `website:${userId}:${input.idempotencyKey}`
+    : null;
+  const hash = creationHash(input);
   return db.$transaction(
     async (client) => {
+      await lockStudio(client);
+      const actor = { id: userId, role: "CLIENT" };
       const user = await client.user.findUnique({ where: { id: userId } });
       invariant(
         user?.emailVerified,
@@ -282,88 +344,215 @@ export async function createBooking(raw: BookingInput, userId: string) {
         "Подтвердите электронную почту перед бронированием.",
         403,
       );
-      const prepared = await prepareQuote(input, client);
-      await lockResources(
-        client,
-        prepared.needs.map((need) => need.resourceId),
-      );
-      // Recheck inventory under locks. The quote is only advisory until this transaction commits.
-      await availableUnits(client, prepared.needs, prepared.settings.timezone);
-      const expiresAt = new Date(
-        Date.now() + prepared.settings.holdMinutes * 60_000,
-      );
-      const booking = await client.booking.create({
-        data: {
-          number: `FS-${randomBytes(5).toString("hex").toUpperCase()}`,
+      const previous = await existingCreation(client, key, hash, actor);
+      if (previous) return previous as ReturnType<typeof bookingDto>;
+      // Identity is established by verified userId, never by matching phone/email text.
+      const customer = await client.customer.upsert({
+        where: { userId },
+        update: {},
+        create: {
           userId,
-          locationId: prepared.location.id,
-          decorVersionId: prepared.version.id,
-          specialistId: prepared.specialist?.id,
           name: input.name,
+          email: user.email,
           phone: input.phone,
-          purpose: input.purpose,
-          guests: input.guests,
-          comment: input.comment,
-          startAt: prepared.startAt,
-          endAt: prepared.endAt,
-          expiresAt,
-          currency: prepared.quote.currency,
-          totalMinor: prepared.quote.totalMinor,
-          depositMinor: prepared.quote.depositMinor,
-          locationName: prepared.location.name,
-          versionName: prepared.version.name,
-          specialistName: prepared.specialist?.name,
-          rulesVersion: prepared.settings.rulesVersion,
-          rulesText: prepared.settings.rulesText,
-          inputSnapshot: json({
-            ...input,
-            resourceNeeds: prepared.needs,
-            timezone: prepared.settings.timezone,
-          }),
-          versionSnapshot: json({
-            id: prepared.version.id,
-            name: prepared.version.name,
-            image: prepared.version.image,
-          }),
-          items: { create: prepared.quote.items },
-          ...(prepared.specialist ||
-          prepared.services.some((service) => service.production)
-            ? {
-                contentProject: {
-                  create: {
-                    title: `${input.purpose} · ${prepared.location.name}`,
-                  },
-                },
-              }
-            : {}),
+          normalizedPhone: input.phone.replace(/\D/g, ""),
         },
-        include: bookingInclude,
       });
-      await reserveResources(
-        client,
-        prepared.needs,
-        prepared.settings.timezone,
-        booking.id,
-        expiresAt,
+      invariant(
+        !customer.archivedAt,
+        "CUSTOMER_ARCHIVED",
+        "Профиль клиента архивирован. Обратитесь в студию.",
+        409,
       );
-      await client.consent.create({
-        data: {
-          userId,
-          kind: "booking_rules",
-          version: prepared.settings.rulesVersion,
-        },
+      return createBookingInTransaction(client, input, {
+        customerId: customer.id,
+        userId,
+        actor,
+        source: "website",
+        key,
+        hash,
       });
-      await audit(client, userId, "booking.created", booking.id, {
-        number: booking.number,
-        totalMinor: booking.totalMinor,
-      });
-      await notifyBooking(client, booking, "created");
-      return bookingDto(booking);
     },
-    { maxWait: 10_000, timeout: 20_000 },
+    { maxWait: 20_000, timeout: 30_000 },
   );
 }
 
+export async function createManualBooking(raw: unknown, actor: Actor) {
+  invariant(
+    isStaff(actor),
+    "FORBIDDEN",
+    "Ручную запись создаёт сотрудник студии.",
+    403,
+  );
+  const input = manualBookingSchema.parse(raw);
+  const key = `manual:${actor.id}:${input.idempotencyKey}`;
+  const hash = creationHash(input);
+  return db.$transaction(
+    async (client) => {
+      await lockStudio(client);
+      const previous = await existingCreation(client, key, hash, actor);
+      if (previous) return previous;
+      const customer = await client.customer.findUnique({
+        where: { id: input.customerId },
+        include: { user: true },
+      });
+      invariant(
+        customer && !customer.archivedAt,
+        "CUSTOMER_UNAVAILABLE",
+        "Выберите действующего клиента.",
+        404,
+      );
+      const userId = customer.user?.emailVerified ? customer.userId : null;
+      return createBookingInTransaction(
+        client,
+        { ...input, name: customer.name, phone: customer.phone ?? "" },
+        {
+          customerId: customer.id,
+          userId,
+          actor,
+          source: input.source,
+          key,
+          hash,
+        },
+      );
+    },
+    { maxWait: 20_000, timeout: 30_000 },
+  );
+}
+
+async function createBookingInTransaction(
+  client: DbClient,
+  input: z.output<typeof quoteInputSchema> & {
+    name: string;
+    phone: string;
+    comment: string;
+    acceptRules: true;
+    expectedTotalMinor?: number;
+    expectedQuoteFingerprint?: string;
+  },
+  identity: {
+    customerId: string;
+    userId: string | null;
+    actor: Actor;
+    source: string;
+    key: string | null;
+    hash: string;
+  },
+) {
+  const prepared = await prepareQuote(input, client);
+  invariant(
+    input.expectedQuoteFingerprint === undefined ||
+      input.expectedQuoteFingerprint === prepared.quote.fingerprint,
+    "QUOTE_CHANGED",
+    "Цена, предоплата, правила или оформление изменились. Обновите расчёт и подтвердите актуальные условия.",
+    409,
+  );
+  invariant(
+    input.expectedTotalMinor === undefined ||
+      input.expectedTotalMinor === prepared.quote.totalMinor,
+    "PRICE_CHANGED",
+    "Стоимость изменилась. Обновите расчёт и подтвердите новую сумму.",
+    409,
+  );
+  await lockResources(
+    client,
+    prepared.needs.map((need) => need.resourceId),
+  );
+  await availableUnits(client, prepared.needs, prepared.settings.timezone);
+  const expiresAt = new Date(
+    Date.now() + prepared.settings.holdMinutes * 60_000,
+  );
+  const booking = await client.booking.create({
+    data: {
+      number: `FS-${randomBytes(5).toString("hex").toUpperCase()}`,
+      userId: identity.userId,
+      customerId: identity.customerId,
+      createdById: identity.actor.id,
+      source: identity.source,
+      creationKey: identity.key,
+      creationPayloadHash: identity.hash,
+      locationId: prepared.location.id,
+      decorVersionId: prepared.version.id,
+      specialistId: prepared.specialist?.id,
+      name: input.name,
+      phone: input.phone,
+      purpose: input.purpose,
+      guests: input.guests,
+      comment: input.comment,
+      startAt: prepared.startAt,
+      endAt: prepared.endAt,
+      expiresAt,
+      currency: prepared.quote.currency,
+      totalMinor: prepared.quote.totalMinor,
+      depositMinor: prepared.quote.depositMinor,
+      locationName: prepared.location.name,
+      versionName: prepared.version.name,
+      specialistName: prepared.specialist?.name,
+      rulesVersion: prepared.settings.rulesVersion,
+      rulesText: prepared.settings.rulesText,
+      inputSnapshot: json({
+        ...input,
+        resourceNeeds: prepared.needs,
+        timezone: prepared.settings.timezone,
+      }),
+      versionSnapshot: json({
+        id: prepared.version.id,
+        name: prepared.version.name,
+        image: prepared.version.image,
+      }),
+      items: { create: prepared.quote.items },
+      ...(prepared.specialist ||
+      prepared.services.some((service) => service.production)
+        ? {
+            contentProject: {
+              create: { title: `${input.purpose} · ${prepared.location.name}` },
+            },
+          }
+        : {}),
+    },
+    include: bookingInclude,
+  });
+  await reserveResources(
+    client,
+    prepared.needs,
+    prepared.settings.timezone,
+    booking.id,
+    expiresAt,
+  );
+  if (identity.userId)
+    await client.consent.create({
+      data: {
+        userId: identity.userId,
+        kind: "booking_rules",
+        version: prepared.settings.rulesVersion,
+      },
+    });
+  await audit(
+    client,
+    identity.actor.id,
+    identity.source === "website"
+      ? "booking.created"
+      : "booking.manual_created",
+    booking.id,
+    {
+      before: null,
+      after: bookingDto(booking),
+      customerId: identity.customerId,
+      source: identity.source,
+      rulesAcceptanceRecordedBy: identity.actor.id,
+    },
+  );
+  await notifyBooking(client, booking, "created");
+  const dto = bookingDto(booking);
+  return isStaff(identity.actor)
+    ? {
+        ...dto,
+        customerId: booking.customerId,
+        createdById: booking.createdById,
+        source: booking.source,
+      }
+    : dto;
+}
 export function savedResources(booking: BookingRecord): {
   needs: ResourceNeed[];
   timezone: string;
@@ -389,6 +578,7 @@ export function savedResources(booking: BookingRecord): {
 
 export async function cancelBooking(id: string, actor: Actor) {
   return db.$transaction(async (client) => {
+    await lockStudio(client);
     const booking = await lockBooking(client, id);
     authorizeBooking(booking, actor);
     invariant(
@@ -450,6 +640,7 @@ export async function rescheduleBooking(
 ) {
   return db.$transaction(
     async (client) => {
+      await lockStudio(client);
       const booking = await lockBooking(client, id);
       authorizeBooking(booking, actor);
       invariant(
@@ -569,6 +760,7 @@ export async function changeBookingStatus(
     in_progress: ["completed"],
   };
   return db.$transaction(async (client) => {
+    await lockStudio(client);
     const booking = await lockBooking(client, id);
     invariant(
       transitions[effectiveStatus(booking)]?.includes(status),
@@ -602,6 +794,7 @@ export async function expireHolds() {
   let expired = 0;
   for (const candidate of candidates) {
     const changed = await db.$transaction(async (client) => {
+      await lockStudio(client);
       const booking = await lockBooking(client, candidate.id);
       if (
         effectiveStatus(booking) !== "expired" ||

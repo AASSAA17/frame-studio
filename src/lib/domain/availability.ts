@@ -7,7 +7,7 @@ import {
   type ResourceNeed,
 } from "./catalog";
 import { DomainError, invariant, type AvailabilityInput } from "./types";
-import { localDay, withinSchedule } from "./time";
+import { localDay, resourceScheduleAllows } from "./time";
 
 export async function lockResources(client: DbClient, ids: string[]) {
   const sorted = [...new Set(ids)].sort();
@@ -29,11 +29,12 @@ export async function availableUnits(
     const resource = await client.resource.findUnique({
       where: { id: need.resourceId },
       include: {
+        exceptions: true,
         closures: {
           where: { startAt: { lt: need.endAt }, endAt: { gt: need.startAt } },
         },
         units: {
-          where: { active: true },
+          where: { active: true, retiredAt: null },
           orderBy: { serial: "asc" },
           include: {
             allocations: {
@@ -54,14 +55,7 @@ export async function availableUnits(
     invariant(
       resource?.active &&
         resource.closures.length === 0 &&
-        withinSchedule(
-          need.startAt,
-          need.endAt,
-          zone,
-          resource.openHour,
-          resource.closeHour,
-          resource.weekdays,
-        ),
+        resourceScheduleAllows(need.startAt, need.endAt, zone, resource),
       "RESOURCE_UNAVAILABLE",
       "Выбранный зал, специалист или оборудование недоступны в это время.",
       409,
@@ -74,13 +68,11 @@ export async function availableUnits(
       409,
     );
     result.push(
-      ...free
-        .slice(0, need.count)
-        .map((unit) => ({
-          unitId: unit.id,
-          startAt: need.startAt,
-          endAt: need.endAt,
-        })),
+      ...free.slice(0, need.count).map((unit) => ({
+        unitId: unit.id,
+        startAt: need.startAt,
+        endAt: need.endAt,
+      })),
     );
   }
   return result;
@@ -127,10 +119,10 @@ export async function getAvailability(input: AvailabilityInput) {
   );
   const location = await db.location.findUnique({
     where: { id: input.locationId },
-    select: { published: true },
+    select: { published: true, archivedAt: true },
   });
   invariant(
-    location?.published,
+    location?.published && !location.archivedAt,
     "LOCATION_UNAVAILABLE",
     "Локация недоступна.",
     404,
@@ -138,10 +130,10 @@ export async function getAvailability(input: AvailabilityInput) {
   if (input.specialistId) {
     const specialist = await db.specialist.findUnique({
       where: { id: input.specialistId },
-      select: { published: true },
+      select: { published: true, archivedAt: true },
     });
     invariant(
-      specialist?.published,
+      specialist?.published && !specialist.archivedAt,
       "SPECIALIST_UNAVAILABLE",
       "Специалист недоступен.",
       404,
@@ -161,7 +153,7 @@ export async function getAvailability(input: AvailabilityInput) {
   if (equipmentIds.length)
     invariant(
       (await db.equipment.count({
-        where: { id: { in: equipmentIds }, published: true },
+        where: { id: { in: equipmentIds }, published: true, archivedAt: null },
       })) === equipmentIds.length,
       "EQUIPMENT_UNAVAILABLE",
       "Оборудование недоступно.",

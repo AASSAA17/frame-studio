@@ -4,14 +4,14 @@ import Link from "next/link";
 import { ArrowLeft, ArrowUpRight, Maximize2, Users, Sun } from "lucide-react";
 import { PublicShell, State, DemoNote } from "@/components/shared";
 import { useStudio } from "@/components/studio-provider";
-import { useApi, money, type Catalog } from "@/components/api";
+import { useApi, money, dateLabel, type Catalog } from "@/components/api";
 export default function Location({
   params,
 }: {
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = use(params);
-  const { t, text } = useStudio();
+  const { t, text, locale, settings } = useStudio();
   const { data, loading, error, refresh } = useApi<Catalog>("/api/catalog");
   const location = data?.locations.find((l) => l.slug === slug);
   return (
@@ -29,7 +29,9 @@ export default function Location({
           <>
             <div className="detail-top">
               <div>
-                <p className="eyebrow">FRAME / {t.city}</p>
+                <p className="eyebrow">
+                  {settings?.name || "FRAME STUDIO"} / {t.city}
+                </p>
                 <h1>
                   {location.name}
                   <span className="serif">.</span>
@@ -44,7 +46,7 @@ export default function Location({
             </div>
             <img
               className="detail-image"
-              src={location.image}
+              src={location.currentVersion?.image || location.image}
               alt={`${location.name} — ${t.illustration}`}
             />
             <div className="hero-caption">
@@ -55,7 +57,12 @@ export default function Location({
                 <h2>
                   {text("Пространство с характером", "Өз мінезі бар кеңістік")}
                 </h2>
-                <p>{location.description}</p>
+                <p>
+                  {locale === "kk"
+                    ? location.descriptionKk ||
+                      "Қазақша сипаттама енгізілмеген."
+                    : location.description}
+                </p>
                 <div className="feature-list">
                   <span>
                     <Maximize2 size={17} />
@@ -110,12 +117,56 @@ export default function Location({
                 </Link>
                 <p className="summary-note">
                   {text(
-                    "Предоплата 30% — демонстрационное условие. Реальные платежи не подключены.",
-                    "30% алдын ала төлем — демо шарт. Нақты төлемдер қосылмаған.",
+                    `Предоплата ${settings?.depositPercent ?? 30}%. Реальные платежи не подключены.`,
+                    `Алдын ала төлем ${settings?.depositPercent ?? 30}%. Нақты төлемдер қосылмаған.`,
                   )}
                 </p>
               </aside>
             </div>
+            {!!location.futureVersions?.length && (
+              <section>
+                <p className="eyebrow">
+                  {text("Скоро в локации", "Локацияның алдағы нұсқалары")}
+                </p>
+                <h2 style={{ marginTop: 15, fontSize: 32 }}>
+                  {text("Будущие оформления", "Болашақ безендірулер")}
+                </h2>
+                <div className="future-decor-list">
+                  {location.futureVersions.map((version) => (
+                    <article className="future-decor-card" key={version.id}>
+                      <img
+                        src={version.image}
+                        alt={version.name}
+                        loading="lazy"
+                      />
+                      <div>
+                        <span className="status-badge">
+                          {text("Будущая версия", "Болашақ нұсқа")}
+                        </span>
+                        <h3>{version.name}</h3>
+                        <p>
+                          {text("С", "Басталуы")}{" "}
+                          {dateLabel(
+                            version.validFrom,
+                            locale,
+                            settings?.timezone || "Asia/Almaty",
+                          )}
+                          {version.validUntil
+                            ? ` — ${dateLabel(version.validUntil, locale, settings?.timezone || "Asia/Almaty")}`
+                            : ""}
+                        </p>
+                        <p>
+                          {text(
+                            "Оформление применяется только к датам в этом периоде.",
+                            "Безендіру тек осы кезеңдегі күндерге қолданылады.",
+                          )}
+                        </p>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
           </>
         )}
       </div>

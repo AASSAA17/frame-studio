@@ -55,6 +55,9 @@ test("client books a real slot, test payment is idempotent, and only authorized 
   await page.getByTestId("booking-submit").click();
   const creation = await creationResponse;
   expect(creation.ok(), "Server must create the booking").toBeTruthy();
+  expect(creation.request().postDataJSON().expectedQuoteFingerprint).toMatch(
+    /^[a-f0-9]{64}$/,
+  );
   const booking = (await creation.json()) as {
     id: string;
     number: string;

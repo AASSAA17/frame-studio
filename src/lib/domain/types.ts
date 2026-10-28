@@ -5,6 +5,7 @@ export class DomainError extends Error {
     public code: string,
     message: string,
     public status = 400,
+    public details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "DomainError";
@@ -15,18 +16,24 @@ export type Actor = { id: string; role: string };
 export const quoteInputSchema = z.object({
   locationId: z.string().min(1).max(100),
   startAt: z.string().datetime({ offset: true }),
-  durationMinutes: z.number().int().min(30).max(720),
+  durationMinutes: z.number().int().min(5).max(720),
   specialistId: z.string().min(1).max(100).optional(),
   serviceIds: z.array(z.string().min(1).max(100)).max(20).default([]),
   equipmentIds: z.array(z.string().min(1).max(100)).max(20).default([]),
   purpose: z.string().min(1).max(100).default("photo"),
-  guests: z.number().int().min(1).max(100).default(1),
+  guests: z.number().int().min(1).max(500).default(1),
 });
 export const bookingInputSchema = quoteInputSchema.extend({
   name: z.string().trim().min(2).max(150),
   phone: z.string().trim().min(6).max(40),
   comment: z.string().trim().max(2000).default(""),
   acceptRules: z.literal(true),
+  idempotencyKey: z.string().min(8).max(150).optional(),
+  expectedTotalMinor: z.number().int().nonnegative().optional(),
+  expectedQuoteFingerprint: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
 });
 export type QuoteInput = z.input<typeof quoteInputSchema>;
 export type BookingInput = z.input<typeof bookingInputSchema>;

@@ -13,6 +13,12 @@ import {
   Search,
   Download,
   ArrowLeft,
+  Users,
+  Settings2,
+  Building2,
+  MapPin,
+  Aperture,
+  Sparkles,
 } from "lucide-react";
 import { AccessGate, OrderDetail, SignOutButton } from "./account-ui";
 import { useStudio } from "./studio-provider";
@@ -26,23 +32,32 @@ import {
   type Catalog,
   type User,
 } from "./api";
-import { State, Empty, StatusBadge, PublicShell } from "./shared";
+import { State, Empty, StatusBadge, PublicShell, Brand } from "./shared";
 
 export function CrmShell({ children }: { children: React.ReactNode }) {
-  const { t, text, locale, setLocale } = useStudio();
+  const { t, text, locale, setLocale, settings } = useStudio();
   const pathname = usePathname();
   return (
     <div className="crm-shell">
       <aside className="crm-sidebar">
-        <Link className="wordmark" href="/">
-          FRAME<span>STUDIO</span>
-        </Link>
+        <Brand />
         <p className="eyebrow">STUDIO WORKSPACE</p>
         <nav className="crm-nav">
           {[
             ["/crm", text("Обзор", "Шолу"), LayoutDashboard],
             ["/crm/calendar", text("Календарь", "Күнтізбе"), CalendarDays],
             ["/crm/bookings", text("Бронирования", "Броньдар"), BookOpen],
+            ["/crm/clients", text("Клиенты", "Клиенттер"), Users],
+            [
+              "/crm/rooms",
+              text("Физические залы", "Физикалық залдар"),
+              Building2,
+            ],
+            ["/crm/locations", t.locations, MapPin],
+            ["/crm/team", t.team, Aperture],
+            ["/crm/equipment", text("Оборудование", "Жабдық"), Box],
+            ["/crm/services", t.services, Sparkles],
+            ["/crm/settings", text("Настройки", "Параметрлер"), Settings2],
             [
               "/crm/resources",
               text("Ресурсы студии", "Студия ресурстары"),
@@ -54,7 +69,12 @@ export function CrmShell({ children }: { children: React.ReactNode }) {
               <Link
                 href={String(href)}
                 key={String(href)}
-                className={pathname === href ? "active" : ""}
+                className={
+                  pathname === href ||
+                  (href !== "/crm" && pathname.startsWith(String(href) + "/"))
+                    ? "active"
+                    : ""
+                }
               >
                 <ItemIcon size={17} />
                 {String(label)}
@@ -63,7 +83,7 @@ export function CrmShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="crm-sidebar-bottom">
-          <span>{text("Первая рабочая версия", "Алғашқы жұмыс нұсқасы")}</span>
+          <span>{text("Управление студией", "Студияны басқару")}</span>
           <Link href="/">
             <ArrowUpRight
               size={13}
@@ -78,7 +98,9 @@ export function CrmShell({ children }: { children: React.ReactNode }) {
       </aside>
       <div className="crm-main">
         <header className="crm-topbar">
-          <span>FRAME / {t.city}</span>
+          <span>
+            {settings?.name || "FRAME STUDIO"} / {t.city}
+          </span>
           <div>
             <div className="language-switch">
               <button
@@ -196,7 +218,7 @@ export function CrmOverview() {
             · {text("Все физические залы", "Барлық физикалық залдар")}
           </p>
         </div>
-        <Link className="button small" href="/booking">
+        <Link className="button small" href="/crm/bookings/new">
           <Plus size={15} />
           {text("Новая бронь", "Жаңа бронь")}
         </Link>
@@ -588,8 +610,8 @@ export function CrmResources() {
           </div>
           <div className="notice">
             {text(
-              "Редактирование ресурсов и настроек в CRM запланировано на следующий этап разработки.",
-              "CRM ішіндегі ресурстар мен параметрлерді өңдеу келесі әзірлеу кезеңіне жоспарланған.",
+              "Изменяйте данные и расписание в разделах «Физические залы», «Локации», «Команда», «Оборудование» и «Настройки».",
+              "Деректер мен кестені «Физикалық залдар», «Локациялар», «Команда», «Жабдық» және «Параметрлер» бөлімдерінде өзгертіңіз.",
             )}
           </div>
         </>

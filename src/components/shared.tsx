@@ -15,6 +15,26 @@ import { useState } from "react";
 import { useStudio } from "./studio-provider";
 import { money, useApi, type User, type StudioLocation } from "./api";
 
+export function Brand() {
+  const { settings } = useStudio();
+  const name = settings?.name || "FRAME STUDIO";
+  return (
+    <Link
+      className={`wordmark ${name !== "FRAME STUDIO" ? "custom-wordmark" : ""}`}
+      href="/"
+      aria-label={name}
+    >
+      {name === "FRAME STUDIO" ? (
+        <>
+          FRAME<span>STUDIO</span>
+        </>
+      ) : (
+        name
+      )}
+    </Link>
+  );
+}
+
 export function Header() {
   const { t, locale, setLocale } = useStudio();
   const pathname = usePathname();
@@ -26,9 +46,7 @@ export function Header() {
         {locale === "ru" ? "Перейти к содержимому" : "Мазмұнға өту"}
       </a>
       <header className="site-header">
-        <Link className="wordmark" href="/" aria-label="FRAME STUDIO">
-          FRAME<span>STUDIO</span>
-        </Link>
+        <Brand />
         <nav
           className="desktop-nav"
           aria-label={locale === "ru" ? "Главное меню" : "Басты мәзір"}
@@ -106,13 +124,11 @@ export function Header() {
   );
 }
 export function Footer() {
-  const { t } = useStudio();
+  const { t, settings } = useStudio();
   return (
     <footer className="site-footer">
       <div className="footer-main">
-        <Link className="wordmark" href="/">
-          FRAME<span>STUDIO</span>
-        </Link>
+        <Brand />
         <p>{t.footer}</p>
         <div className="footer-links">
           <Link href="/locations">{t.locations}</Link>
@@ -123,7 +139,8 @@ export function Footer() {
       </div>
       <div className="footer-bottom">
         <span>
-          © {new Date().getFullYear()} FRAME STUDIO · {t.city}
+          © {new Date().getFullYear()} {settings?.name || "FRAME STUDIO"} ·{" "}
+          {t.city}
         </span>
         <span>{t.demo}</span>
         <div>
@@ -222,7 +239,11 @@ export function LocationCard({
     <article className="location-card">
       <Link className="location-image" href={`/locations/${location.slug}`}>
         <img
-          src={location.image || `/images/${location.slug}.svg`}
+          src={
+            location.currentVersion?.image ||
+            location.image ||
+            `/images/${location.slug}.svg`
+          }
           alt={`${location.name} — ${t.illustration}`}
           loading="lazy"
         />

@@ -1,6 +1,8 @@
+import { lockStudio } from "./locks";
 import { z } from "zod";
 import { db } from "../db";
-import type { DbClient } from "./catalog";
+import { getSettings, type DbClient } from "./catalog";
+import { withinSchedule } from "./time";
 import {
   lockResources,
   availableUnits,
@@ -49,6 +51,7 @@ export async function recordPayment(
   );
   return db.$transaction(
     async (client) => {
+      await lockStudio(client);
       const booking = await lockBooking(client, id);
       return recordPaymentLocked(client, booking, input, actor);
     },
@@ -111,6 +114,7 @@ async function recordPaymentLocked(
   );
   let needsReview = false;
   const expired = effectiveStatus(booking) === "expired";
+  const currentSettings = await getSettings(client);
   if (expired) {
     try {
       invariant(
@@ -119,7 +123,25 @@ async function recordPaymentLocked(
         "Время съёмки уже прошло.",
         409,
       );
-      await availableUnits(client, saved.needs, saved.timezone, new Date(), id);
+      invariant(
+        withinSchedule(
+          booking.startAt,
+          booking.endAt,
+          currentSettings.timezone,
+          currentSettings.openHour,
+          currentSettings.closeHour,
+        ),
+        "OUTSIDE_HOURS",
+        "Выбранное время теперь выходит за рабочие часы студии.",
+        409,
+      );
+      await availableUnits(
+        client,
+        saved.needs,
+        currentSettings.timezone,
+        new Date(),
+        id,
+      );
     } catch (error) {
       if (!(error instanceof DomainError) || error.status !== 409) throw error;
       needsReview = true;
@@ -173,7 +195,7 @@ async function recordPaymentLocked(
       await reserveResources(
         client,
         saved.needs,
-        saved.timezone,
+        currentSettings.timezone,
         id,
         expiresAt,
       );
@@ -224,6 +246,7 @@ export async function recordTestPayment(
       : "Тестовая оплата остатка. Реальные деньги не списываются.";
   return db.$transaction(
     async (client) => {
+      await lockStudio(client);
       const booking = await lockBooking(client, id);
       authorizeBooking(booking, actor);
       invariant(
@@ -298,6 +321,7 @@ export async function refundPayment(
     .extend({ comment: z.string().trim().min(3).max(1000) })
     .parse(raw);
   return db.$transaction(async (client) => {
+    await lockStudio(client);
     const booking = await lockBooking(client, id);
     const previous = await client.payment.findUnique({
       where: { idempotencyKey: input.idempotencyKey },

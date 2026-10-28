@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { createHash } from "node:crypto";
 import { DateTime } from "luxon";
 import { db } from "../db";
 import { hourlyLine, summarizePrice } from "./pricing";
@@ -37,32 +38,37 @@ export async function getCatalog() {
   const now = new Date();
   const [locations, specialists, services, equipment] = await Promise.all([
     db.location.findMany({
-      where: { published: true, room: { resource: { active: true } } },
+      where: {
+        published: true,
+        archivedAt: null,
+        room: { archivedAt: null, resource: { active: true } },
+      },
       orderBy: { name: "asc" },
       include: {
         versions: {
           where: {
             published: true,
-            validFrom: { lte: now },
+            archivedAt: null,
             OR: [{ validUntil: null }, { validUntil: { gt: now } }],
           },
           orderBy: { validFrom: "desc" },
-          take: 1,
         },
       },
     }),
     db.specialist.findMany({
-      where: { published: true, resource: { active: true } },
+      where: { published: true, archivedAt: null, resource: { active: true } },
       orderBy: { name: "asc" },
     }),
     db.service.findMany({
-      where: { published: true },
+      where: { published: true, archivedAt: null },
       orderBy: { name: "asc" },
     }),
     db.equipment.findMany({
-      where: { published: true, resource: { active: true } },
+      where: { published: true, archivedAt: null, resource: { active: true } },
       include: {
-        resource: { include: { units: { where: { active: true } } } },
+        resource: {
+          include: { units: { where: { active: true, retiredAt: null } } },
+        },
       },
       orderBy: { name: "asc" },
     }),
@@ -81,11 +87,47 @@ export async function getCatalog() {
       minimumMinutes: settings.minimumMinutes,
       rulesText: settings.rulesText,
       rulesVersion: settings.rulesVersion,
+      contacts: settings.contacts,
+      bufferBeforeMinutes: settings.bufferBeforeMinutes,
+      bufferAfterMinutes: settings.bufferAfterMinutes,
     },
-    locations: locations.map(({ versions, ...location }) => ({
-      ...location,
-      versionName: versions[0]?.name ?? "Оформление уточняется",
-    })),
+    locations: locations.map(
+      ({
+        versions,
+        archivedAt: _archivedAt,
+        revision: _revision,
+        ...location
+      }) => {
+        const current = versions.find(
+          (version) =>
+            version.validFrom <= now &&
+            (!version.validUntil || version.validUntil > now),
+        );
+        return {
+          ...location,
+          versionName: current?.name ?? "Оформление уточняется",
+          currentVersion: current
+            ? {
+                id: current.id,
+                name: current.name,
+                image: current.image,
+                validFrom: current.validFrom.toISOString(),
+                validUntil: current.validUntil?.toISOString() ?? null,
+              }
+            : null,
+          futureVersions: versions
+            .filter((version) => version.validFrom > now)
+            .sort((a, b) => a.validFrom.getTime() - b.validFrom.getTime())
+            .map((version) => ({
+              id: version.id,
+              name: version.name,
+              image: version.image,
+              validFrom: version.validFrom.toISOString(),
+              validUntil: version.validUntil?.toISOString() ?? null,
+            })),
+        };
+      },
+    ),
     specialists: specialists.map(
       ({ id, name, specialty, hourlyPriceMinor }) => ({
         id,
@@ -100,12 +142,14 @@ export async function getCatalog() {
       description,
       priceMinor,
     })),
-    equipment: equipment.map(({ resource, ...item }) => ({
-      id: item.id,
-      name: item.name,
-      priceMinor: item.priceMinor,
-      quantity: resource.units.length,
-    })),
+    equipment: equipment
+      .filter((item) => item.resource.units.length > 0)
+      .map(({ resource, ...item }) => ({
+        id: item.id,
+        name: item.name,
+        priceMinor: item.priceMinor,
+        quantity: resource.units.length,
+      })),
   };
 }
 
@@ -154,7 +198,10 @@ export async function prepareQuote(
     include: { room: { include: { resource: true } } },
   });
   invariant(
-    location?.published && location.room.resource.active,
+    location?.published &&
+      !location.archivedAt &&
+      !location.room.archivedAt &&
+      location.room.resource.active,
     "LOCATION_UNAVAILABLE",
     "Локация недоступна.",
     404,
@@ -168,6 +215,7 @@ export async function prepareQuote(
     where: {
       locationId: location.id,
       published: true,
+      archivedAt: null,
       validFrom: { lte: startAt },
       OR: [{ validUntil: null }, { validUntil: { gte: endAt } }],
     },
@@ -187,14 +235,17 @@ export async function prepareQuote(
     : null;
   invariant(
     !input.specialistId ||
-      (specialist?.published && specialist.resource.active),
+      (specialist?.published &&
+        !specialist.archivedAt &&
+        specialist.resource.active),
     "SPECIALIST_UNAVAILABLE",
     "Специалист недоступен.",
     409,
   );
   const serviceIds = [...new Set(input.serviceIds)];
   const services = await client.service.findMany({
-    where: { id: { in: serviceIds }, published: true },
+    where: { id: { in: serviceIds }, published: true, archivedAt: null },
+    orderBy: { id: "asc" },
   });
   invariant(
     services.length === serviceIds.length,
@@ -210,9 +261,11 @@ export async function prepareQuote(
     where: {
       id: { in: Object.keys(equipmentCounts) },
       published: true,
+      archivedAt: null,
       resource: { active: true },
     },
     include: { resource: true },
+    orderBy: { id: "asc" },
   });
   invariant(
     equipment.length === Object.keys(equipmentCounts).length,
@@ -269,6 +322,23 @@ export async function prepareQuote(
       startAt,
       endAt,
     });
+  const price = summarizePrice(items, settings.depositPercent);
+  invariant(
+    price.totalMinor > 0 && price.depositMinor > 0,
+    "NONPOSITIVE_PRICE",
+    "Стоимость и предоплата должны быть больше нуля. Уточните тариф студии.",
+  );
+  const quote = {
+    items,
+    ...price,
+    currency: settings.currency,
+    version: { id: version.id, name: version.name, image: version.image },
+    rulesVersion: settings.rulesVersion,
+    rulesText: settings.rulesText,
+  };
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify(quote))
+    .digest("hex");
   return {
     input,
     settings,
@@ -280,14 +350,7 @@ export async function prepareQuote(
     services,
     equipment,
     needs,
-    quote: {
-      items,
-      ...summarizePrice(items, settings.depositPercent),
-      currency: settings.currency,
-      version: { id: version.id, name: version.name, image: version.image },
-      rulesVersion: settings.rulesVersion,
-      rulesText: settings.rulesText,
-    },
+    quote: { ...quote, fingerprint },
   };
 }
 

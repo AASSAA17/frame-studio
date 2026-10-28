@@ -39,7 +39,7 @@ const schema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("reschedule"),
     startAt: z.string().datetime({ offset: true }),
-    durationMinutes: z.number().int().min(30).max(720),
+    durationMinutes: z.number().int().min(5).max(720),
   }),
   z.object({
     action: z.literal("refund"),

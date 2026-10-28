@@ -94,16 +94,85 @@ export function InformationPage({
         ) : kind === "contacts" ? (
           <div className="contact-panel">
             <div>
-              <h2>FRAME STUDIO / {data?.settings.city || t.city}</h2>
-              <p>
-                {text(
-                  "Демонстрационный проект фотостудии. Реальный адрес, телефон и социальные сети пока не указаны владельцем.",
-                  "Фотостудияның демонстрациялық жобасы. Нақты мекенжай, телефон және әлеуметтік желілерді иесі әлі енгізбеген.",
-                )}
-              </p>
+              <h2>
+                {data?.settings.name || "FRAME STUDIO"} /{" "}
+                {data?.settings.city || t.city}
+              </h2>
+              {loading || error ? (
+                <State loading={loading} error={error} retry={refresh} />
+              ) : (
+                !Object.values(data?.settings.contacts || {}).some(Boolean) && (
+                  <p>
+                    {text(
+                      "Демонстрационный проект фотостудии. Реальный адрес, телефон и социальные сети пока не указаны владельцем.",
+                      "Фотостудияның демонстрациялық жобасы. Нақты мекенжай, телефон және әлеуметтік желілерді иесі әлі енгізбеген.",
+                    )}
+                  </p>
+                )
+              )}
+              {data?.settings.contacts && (
+                <dl className="contact-details">
+                  {data.settings.contacts.address && (
+                    <div>
+                      <dt>{text("Адрес", "Мекенжай")}</dt>
+                      <dd>{data.settings.contacts.address}</dd>
+                    </div>
+                  )}
+                  {data.settings.contacts.phone && (
+                    <div>
+                      <dt>{t.phone}</dt>
+                      <dd>
+                        <a
+                          href={`tel:${data.settings.contacts.phone.replace(/[^\d+]/g, "")}`}
+                        >
+                          {data.settings.contacts.phone}
+                        </a>
+                      </dd>
+                    </div>
+                  )}
+                  {data.settings.contacts.email && (
+                    <div>
+                      <dt>{t.email}</dt>
+                      <dd>
+                        <a href={`mailto:${data.settings.contacts.email}`}>
+                          {data.settings.contacts.email}
+                        </a>
+                      </dd>
+                    </div>
+                  )}
+                  {data.settings.contacts.instagram && (
+                    <div>
+                      <dt>Instagram</dt>
+                      <dd>
+                        <a
+                          href={data.settings.contacts.instagram}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Instagram ↗
+                        </a>
+                      </dd>
+                    </div>
+                  )}
+                  {data.settings.contacts.website && (
+                    <div>
+                      <dt>{text("Сайт", "Сайт")}</dt>
+                      <dd>
+                        <a
+                          href={data.settings.contacts.website}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {data.settings.contacts.website} ↗
+                        </a>
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+              )}
               {data && (
                 <p>
-                  {text("Тестовое расписание", "Сынақ кестесі")}:{" "}
+                  {text("Часы работы", "Жұмыс уақыты")}:{" "}
                   {String(data.settings.openHour).padStart(2, "0")}:00 —{" "}
                   {String(data.settings.closeHour).padStart(2, "0")}:00
                   <br />

@@ -17,8 +17,11 @@ import {
   DemoNote,
 } from "@/components/shared";
 export default function Home() {
-  const { t, text } = useStudio();
+  const { t, text, settings } = useStudio();
   const { data, loading, error, refresh } = useApi<Catalog>("/api/catalog");
+  const heroLocation =
+    data?.locations.find((location) => location.slug === "daylight") ||
+    data?.locations[0];
   return (
     <PublicShell>
       <section className="hero page-width">
@@ -42,12 +45,16 @@ export default function Home() {
         </div>
         <div className="hero-image">
           <img
-            src="/images/daylight.svg"
+            src={
+              heroLocation?.currentVersion?.image ||
+              heroLocation?.image ||
+              "/images/daylight.svg"
+            }
             alt={t.illustration}
             fetchPriority="high"
           />
           <div className="hero-image-label">
-            <span>01 / DAYLIGHT</span>
+            <span>01 / {heroLocation?.name || "DAYLIGHT"}</span>
             <span>
               <Sun size={14} />
               {text(
@@ -57,7 +64,7 @@ export default function Home() {
             </span>
           </div>
           <span className="hero-image-mark">
-            FRAME
+            {settings?.name || "FRAME STUDIO"}
             <br />
             <small>YOUR NEXT IDEA</small>
           </span>

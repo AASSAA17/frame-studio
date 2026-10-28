@@ -19,6 +19,7 @@
     "test": "vitest run tests/domain",
     "test:unit": "vitest run tests/domain",
     "test:integration": "vitest run tests/integration",
+    "test:migration": "tsx scripts/verify-stage2-migration.ts",
     "test:e2e": "playwright test",
     "check": "pnpm typecheck && pnpm test:unit",
     "format": "prettier --write src tests scripts/*.ts *.ts *.mjs *.json"

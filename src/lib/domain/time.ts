@@ -45,3 +45,55 @@ export function withinSchedule(
 export function overlaps(startA: Date, endA: Date, startB: Date, endB: Date) {
   return startA < endB && endA > startB;
 }
+
+export type ScheduleException = {
+  date: string;
+  closed: boolean;
+  openHour: number | null;
+  closeHour: number | null;
+};
+export function resourceScheduleAllows(
+  startAt: Date,
+  endAt: Date,
+  zone: string,
+  resource: {
+    openHour: number;
+    closeHour: number;
+    weekdays: number[];
+    exceptions: ScheduleException[];
+  },
+) {
+  checkTimezone(zone);
+  const start = DateTime.fromJSDate(startAt, { zone });
+  const end = DateTime.fromJSDate(endAt, { zone });
+  // A closed calendar date also blocks spill-over from an overnight shift.
+  for (let day = start.startOf("day"); day < end; day = day.plus({ days: 1 })) {
+    if (
+      resource.exceptions.some(
+        (exception) => exception.date === day.toISODate() && exception.closed,
+      )
+    )
+      return false;
+  }
+  for (const day of [
+    start.startOf("day").minus({ days: 1 }),
+    start.startOf("day"),
+  ]) {
+    const exception = resource.exceptions.find(
+      (value) => value.date === day.toISODate(),
+    );
+    if (
+      exception?.closed ||
+      (!exception && !resource.weekdays.includes(day.weekday))
+    )
+      continue;
+    const openHour = exception?.openHour ?? resource.openHour;
+    const closeHour = exception?.closeHour ?? resource.closeHour;
+    const open = day.plus({ hours: openHour });
+    const close = day.plus({
+      hours: closeHour <= openHour ? closeHour + 24 : closeHour,
+    });
+    if (start >= open && end <= close) return true;
+  }
+  return false;
+}

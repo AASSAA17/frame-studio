@@ -5,6 +5,28 @@ import { hashPassword } from "better-auth/crypto";
 
 type MailSummary = { ID: string; To: { Address: string }[] };
 
+export async function authPost(
+  page: Page,
+  path: string,
+  data: unknown,
+  origin: string,
+) {
+  // A local Next server has one shared Better Auth rate-limit bucket. Respect it;
+  // a burst of synthetic users must not require disabling the production guard.
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await page.request.post(path, {
+      headers: { Origin: origin },
+      data,
+    });
+    if (response.status() !== 429 || attempt === 6) return response;
+    const seconds = Math.max(
+      1,
+      Math.min(60, Number(response.headers()["retry-after"]) || 10),
+    );
+    await new Promise((resolve) => setTimeout(resolve, seconds * 1000 + 100));
+  }
+}
+
 export async function registerVerifiedClient(
   page: Page,
   options: { viaUI?: boolean } = {},
@@ -47,23 +69,27 @@ export async function registerVerifiedClient(
       page.getByRole("status").filter({ hasText: "Проверьте почту" }),
     ).toBeVisible();
   } else {
-    const signup = await page.request.post("/api/auth/sign-up/email", {
-      headers: { Origin: origin },
-      data: {
+    const signup = await authPost(
+      page,
+      "/api/auth/sign-up/email",
+      {
         email,
         password,
         name: "Тестовый клиент",
         callbackURL: "/account",
         role: "OWNER",
       },
-    });
+      origin,
+    );
     expect(signup.ok(), "Registration must succeed").toBeTruthy();
   }
 
-  const unverifiedLogin = await page.request.post("/api/auth/sign-in/email", {
-    headers: { Origin: origin },
-    data: { email, password },
-  });
+  const unverifiedLogin = await authPost(
+    page,
+    "/api/auth/sign-in/email",
+    { email, password },
+    origin,
+  );
   expect(
     unverifiedLogin.status(),
     "An unverified email must not be able to sign in",
@@ -125,7 +151,9 @@ export async function registerVerifiedClient(
   return { email, password, origin };
 }
 
-export async function createStaffFixture() {
+export async function createStaffFixture(
+  role: "OWNER" | "ADMIN" | "SPECIALIST" = "OWNER",
+) {
   if (process.env.E2E_CREATE_STAFF_FIXTURE !== "1") {
     throw new Error(
       "Set E2E_CREATE_STAFF_FIXTURE=1 for the local CRM test. This creates a synthetic owner account.",
@@ -134,7 +162,10 @@ export async function createStaffFixture() {
   const databaseURL = process.env.DATABASE_URL;
   if (
     !databaseURL ||
-    !["localhost", "127.0.0.1", "[::1]"].includes(new URL(databaseURL).hostname)
+    !["localhost", "127.0.0.1", "[::1]"].includes(
+      new URL(databaseURL).hostname,
+    ) ||
+    !new URL(databaseURL).pathname.endsWith("_e2e")
   ) {
     throw new Error("E2E staff fixtures require a local disposable database.");
   }
@@ -150,7 +181,7 @@ export async function createStaffFixture() {
           id,
           email,
           name: "Тестовый сотрудник E2E",
-          role: "OWNER",
+          role,
           emailVerified: true,
         },
       });
@@ -167,5 +198,5 @@ export async function createStaffFixture() {
   } finally {
     await fixtureDB.$disconnect();
   }
-  return { email, password };
+  return { id, email, password };
 }

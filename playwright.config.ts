@@ -1,10 +1,14 @@
 import "dotenv/config";
 import { defineConfig, devices } from "@playwright/test";
+import { e2eEnvironment } from "./tests/e2e/environment";
 
-const baseURL =
-  process.env.E2E_BASE_URL ??
-  process.env.BETTER_AUTH_URL ??
-  "http://localhost:3000";
+const { baseURL, databaseURL } = e2eEnvironment();
+process.env.E2E_APPLICATION_DATABASE_URL ??= process.env.DATABASE_URL;
+process.env.E2E_DATABASE_URL = databaseURL;
+process.env.DATABASE_URL = databaseURL;
+process.env.E2E_BASE_URL = baseURL;
+process.env.BETTER_AUTH_URL = baseURL;
+process.env.E2E_CREATE_STAFF_FIXTURE ??= "1";
 const channel =
   process.env.E2E_BROWSER_CHANNEL ??
   (process.platform === "win32" ? "chrome" : undefined);
@@ -24,6 +28,14 @@ export default defineConfig({
   retries: 0,
   reporter: "list",
   outputDir: "test-results",
+  webServer: {
+    command: "pnpm exec tsx tests/e2e/server.ts",
+    url: `${baseURL}/api/health`,
+    reuseExistingServer: false,
+    timeout: 120_000,
+    stdout: "pipe",
+    stderr: "pipe",
+  },
   use: {
     baseURL,
     locale: "ru-RU",
